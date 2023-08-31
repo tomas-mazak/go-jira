@@ -8,21 +8,15 @@ import (
 	"github.com/trivago/tgo/tcontainer"
 )
 
-// CreateMetaInfo contains information about fields and their attributed to create a ticket.
-type CreateMetaInfo struct {
-	Expand   string         `json:"expand,omitempty"`
-	Projects []*MetaProject `json:"projects,omitempty"`
-}
-
 // MetaProject is the meta information about a project returned from createmeta api
 type MetaProject struct {
-	Expand string `json:"expand,omitempty"`
-	Self   string `json:"self,omitempty"`
-	Id     string `json:"id,omitempty"`
-	Key    string `json:"key,omitempty"`
-	Name   string `json:"name,omitempty"`
+	Self string `json:"self,omitempty"`
+	Id   string `json:"id,omitempty"`
+	Key  string `json:"key,omitempty"`
+	Name string `json:"name,omitempty"`
 	// omitted avatarUrls
-	IssueTypes []*MetaIssueType `json:"issuetypes,omitempty"`
+	//IssueTypes []*MetaIssueType `json:"issuetypes,omitempty"`
+	IssueTypes []*IssueType `json:"issuetypes,omitempty"`
 }
 
 // MetaIssueType represents the different issue types a project has.
@@ -42,14 +36,18 @@ type MetaIssueType struct {
 	Fields      tcontainer.MarshalMap `json:"fields,omitempty"`
 }
 
+type issueTypeMetaResp struct {
+	Values []tcontainer.MarshalMap `json:"values,omitempty"`
+}
+
 // GetCreateMeta makes the api call to get the meta information required to create a ticket
-func (s *IssueService) GetCreateMeta(projectkeys string) (*CreateMetaInfo, *Response, error) {
-	return s.GetCreateMetaWithOptions(&GetQueryOptions{ProjectKeys: projectkeys, Expand: "projects.issuetypes.fields"})
+func (s *IssueService) GetCreateMeta(projectKey string) (*MetaProject, *Response, error) {
+	return s.GetCreateMetaWithOptions(projectKey, &GetQueryOptions{})
 }
 
 // GetCreateMetaWithOptions makes the api call to get the meta information without requiring to have a projectKey
-func (s *IssueService) GetCreateMetaWithOptions(options *GetQueryOptions) (*CreateMetaInfo, *Response, error) {
-	apiEndpoint := "rest/api/2/issue/createmeta"
+func (s *IssueService) GetCreateMetaWithOptions(projectKey string, options *GetQueryOptions) (*MetaProject, *Response, error) {
+	apiEndpoint := fmt.Sprintf("rest/api/2/project/%s", projectKey)
 
 	req, err := s.client.NewRequest("GET", apiEndpoint, nil)
 	if err != nil {
@@ -63,7 +61,9 @@ func (s *IssueService) GetCreateMetaWithOptions(options *GetQueryOptions) (*Crea
 		req.URL.RawQuery = q.Encode()
 	}
 
-	meta := new(CreateMetaInfo)
+	fmt.Printf("%v\n", req.URL.String())
+
+	meta := new(MetaProject)
 	resp, err := s.client.Do(req, meta)
 
 	if err != nil {
@@ -73,54 +73,80 @@ func (s *IssueService) GetCreateMetaWithOptions(options *GetQueryOptions) (*Crea
 	return meta, resp, nil
 }
 
-// GetProjectWithName returns a project with "name" from the meta information received. If not found, this returns nil.
-// The comparison of the name is case insensitive.
-func (m *CreateMetaInfo) GetProjectWithName(name string) *MetaProject {
-	for _, m := range m.Projects {
-		if strings.ToLower(m.Name) == strings.ToLower(name) {
-			return m
-		}
-	}
-	return nil
+// GetCreateMeta makes the api call to get the meta information required to create a ticket
+func (s *IssueService) GetIssueTypeMeta(projectKey string, issueType *IssueType) (*MetaIssueType, *Response, error) {
+	return s.GetIssueTypeMetaWithOptions(projectKey, issueType, &GetQueryOptions{})
 }
 
-// GetProjectWithKey returns a project with "name" from the meta information received. If not found, this returns nil.
-// The comparison of the name is case insensitive.
-func (m *CreateMetaInfo) GetProjectWithKey(key string) *MetaProject {
-	for _, m := range m.Projects {
-		if strings.ToLower(m.Key) == strings.ToLower(key) {
-			return m
-		}
+// GetCreateMetaWithOptions makes the api call to get the meta information without requiring to have a projectKey
+func (s *IssueService) GetIssueTypeMetaWithOptions(projectKey string, issueType *IssueType, options *GetQueryOptions) (*MetaIssueType, *Response, error) {
+	apiEndpoint := fmt.Sprintf("rest/api/2/issue/createmeta/%s/issuetypes/%s", projectKey, issueType.ID)
+
+	req, err := s.client.NewRequest("GET", apiEndpoint, nil)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	if options != nil {
+		q, err := query.Values(options)
+		if err != nil {
+			return nil, nil, err
+		}
+		req.URL.RawQuery = q.Encode()
+	}
+
+	fmt.Printf("%v\n", req.URL.String())
+
+	meta := &MetaIssueType{
+		Self:        issueType.Self,
+		Id:          issueType.ID,
+		Description: issueType.Description,
+		IconUrl:     issueType.IconURL,
+		Name:        issueType.Name,
+		Subtasks:    issueType.Subtask,
+	}
+
+	content := new(issueTypeMetaResp)
+	resp, err := s.client.Do(req, content)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	meta.Fields = make(tcontainer.MarshalMap)
+	for _, field := range content.Values {
+		meta.Fields[field["fieldId"].(string)] = field
+	}
+
+	return meta, resp, nil
 }
 
-// GetIssueTypeWithName returns an IssueType with name from a given MetaProject. If not found, this returns nil.
+// GetIssueTypeWithName returns an ID of an IssueType with name from a given MetaProject.
 // The comparison of the name is case insensitive
-func (p *MetaProject) GetIssueTypeWithName(name string) *MetaIssueType {
+func (p *MetaProject) GetIssueTypeWithName(name string) (*IssueType, error) {
 	for _, m := range p.IssueTypes {
-		if strings.ToLower(m.Name) == strings.ToLower(name) {
-			return m
+		if strings.EqualFold(m.Name, strings.ToLower(name)) {
+			return m, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("IssueType with name %s not found", name)
 }
 
 // GetMandatoryFields returns a map of all the required fields from the MetaIssueTypes.
 // if a field returned by the api was:
-// "customfield_10806": {
-//					"required": true,
-//					"schema": {
-//						"type": "any",
-//						"custom": "com.pyxis.greenhopper.jira:gh-epic-link",
-//						"customId": 10806
-//					},
-//					"name": "Epic Link",
-//					"hasDefaultValue": false,
-//					"operations": [
-//						"set"
-//					]
-//				}
+//
+//	"customfield_10806": {
+//						"required": true,
+//						"schema": {
+//							"type": "any",
+//							"custom": "com.pyxis.greenhopper.jira:gh-epic-link",
+//							"customId": 10806
+//						},
+//						"name": "Epic Link",
+//						"hasDefaultValue": false,
+//						"operations": [
+//							"set"
+//						]
+//					}
+//
 // the returned map would have "Epic Link" as the key and "customfield_10806" as value.
 // This choice has been made so that the it is easier to generate the create api request later.
 func (t *MetaIssueType) GetMandatoryFields() (map[string]string, error) {
@@ -175,7 +201,7 @@ func (t *MetaIssueType) CheckCompleteAndAvailable(config map[string]string) (boo
 			for name := range mandatory {
 				requiredFields = append(requiredFields, name)
 			}
-			return false, fmt.Errorf("Required field not found in provided jira.fields. Required are: %#v", requiredFields)
+			return false, fmt.Errorf("required field not found in provided jira.fields. Required are: %#v", requiredFields)
 		}
 	}
 
@@ -186,7 +212,7 @@ func (t *MetaIssueType) CheckCompleteAndAvailable(config map[string]string) (boo
 			for name := range all {
 				availableFields = append(availableFields, name)
 			}
-			return false, fmt.Errorf("Fields in jira.fields are not available in jira. Available are: %#v", availableFields)
+			return false, fmt.Errorf("fields in jira.fields are not available in jira. Available are: %#v", availableFields)
 		}
 	}
 
